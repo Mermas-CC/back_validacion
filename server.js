@@ -91,6 +91,17 @@ app.get('/versiones-palabras', async (req, res) => {
     }
 });
 
+app.get('/palabras/no-validadas', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM palabras WHERE validada = false'); // Ajusta la consulta si es necesario
+        res.json(result.rows);  // Devuelve las palabras no validadas
+    } catch (error) {
+        console.error(error);
+        res.status(500).send('Error al obtener las palabras no validadas');
+    }
+});
+
+
 // Ruta para actualizar una palabra existente
 app.put('/palabras/:id', async (req, res) => {
     const id = req.params.id;

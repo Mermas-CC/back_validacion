@@ -201,6 +201,80 @@ app.post('/validar-palabra/:id', async (req, res) => {
         res.status(500).send('Error al validar la palabra');
     }
 });
+// Ruta para obtener usuarios con rol "valido"
+app.get('/usuarios/valido', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM usuarios WHERE rol = $1', ['valido']);
+        res.json(result.rows);  // Devuelve los usuarios con rol "valido"
+    } catch (error) {
+        console.error('Error al obtener usuarios:', error);
+        res.status(500).send('Error al obtener usuarios');
+    }
+});
+
+// Ruta para crear un nuevo usuario
+app.post('/usuarios', async (req, res) => {
+    const { nombre, contraseña, email, rol } = req.body;
+
+    // Verificar si el usuario ya existe
+    const existingUser = await pool.query('SELECT * FROM usuarios WHERE nombre = $1', [nombre]);
+    if (existingUser.rows.length > 0) {
+        return res.status(400).json({ message: 'Usuario ya existe' });
+    }
+
+    // Hashear la contraseña
+    const passwordHash = await bcrypt.hash(contraseña, 10);
+
+    try {
+        const newUser = await pool.query(
+            'INSERT INTO usuarios (nombre, contraseña, email, rol) VALUES ($1, $2, $3, $4) RETURNING *',
+            [nombre, passwordHash, email, rol]
+        );
+        res.status(201).json(newUser.rows[0]); // Devuelve el nuevo usuario creado
+    } catch (error) {
+        console.error(error);
+        res.status(500).send('Error al registrar el usuario');
+    }
+});
+
+// Ruta para actualizar un usuario existente
+app.put('/usuarios/:id', async (req, res) => {
+    const id = req.params.id;
+    const { nombre, contraseña, email, rol } = req.body;
+
+    try {
+        const existingUser = await pool.query('SELECT * FROM usuarios WHERE id = $1', [id]);
+        if (existingUser.rows.length === 0) {
+            return res.status(404).send('Usuario no encontrado');
+        }
+
+        // Hashear la nueva contraseña si se proporciona
+        const passwordHash = contraseña ? await bcrypt.hash(contraseña, 10) : existingUser.rows[0].contraseña;
+
+        const result = await pool.query(
+            'UPDATE usuarios SET nombre = $1, contraseña = $2, email = $3, rol = $4 WHERE id = $5 RETURNING *',
+            [nombre, passwordHash, email, rol, id]
+        );
+
+        res.json(result.rows.length > 0 ? result.rows[0] : { message: 'Usuario no encontrado' });
+    } catch (error) {
+        console.error(error);
+        res.status(500).send('Error al actualizar el usuario');
+    }
+});
+
+// Ruta para eliminar un usuario
+app.delete('/usuarios/:id', async (req, res) => {
+    const id = req.params.id;
+    try {
+        const result = await pool.query('DELETE FROM usuarios WHERE id = $1 RETURNING *', [id]);
+        res.json(result.rows.length > 0 ? result.rows[0] : { message: 'Usuario no encontrado' });
+    } catch (error) {
+        console.error(error);
+        res.status(500).send('Error al eliminar el usuario');
+    }
+});
+
 
 // Ruta para obtener todas las versiones de palabras
 app.get('/versiones_palabras', async (req, res) => {

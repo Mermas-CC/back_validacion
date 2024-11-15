@@ -1,9 +1,11 @@
 // Importar las dependencias necesarias
 const express = require('express');
+const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
+const session = require('express-session');
 
 // Crear una instancia de la aplicación Express
 const app = express();
@@ -12,6 +14,24 @@ const PORT = process.env.PORT || 5000;
 // Configurar middleware
 app.use(cors());
 app.use(bodyParser.json());
+
+const secretKey = 'mermitas'; // Cambia esto por una clave más segura
+
+const verifyToken = (req, res, next) => {
+    const token = req.headers['authorization'];
+
+    if (!token) {
+        return res.status(401).json({ error: 'No autorizado' });
+    }
+
+    jwt.verify(token, secretKey, (err, decoded) => {
+        if (err) {
+            return res.status(403).json({ error: 'Token inválido' });
+        }
+        req.user = decoded; // Establecer el usuario en la solicitud
+        next();
+    });
+};
 
 // Configuración de la conexión a PostgreSQL
 const pool = new Pool({
@@ -52,7 +72,7 @@ app.post('/register', async (req, res) => {
 
     try {
         const newUser = await pool.query(
-            'INSERT INTO nuevos_usuarios (username, password, rol) VALUES ($1, $2, $3) RETURNING *',
+            'INSERT INTO usuarios (username, password, rol) VALUES ($1, $2, $3) RETURNING *',
             [username, passwordHash, rol]
         );
         res.status(201).json(newUser.rows[0]); // Devuelve el nuevo usuario creado
@@ -91,15 +111,36 @@ app.get('/versiones-palabras', async (req, res) => {
     }
 });
 
-app.get('/palabras/no-validadas', async (req, res) => {
+// Suponiendo que ya tienes el middleware de autenticación implementado
+app.get('/palabras/no-validadas', verifyToken, async (req, res) => {
+    const usuarioId = req.user.id; // Asegúrate de que esta línea funcione correctamente
+
     try {
-        const result = await pool.query('SELECT * FROM palabras WHERE validada = false'); // Ajusta la consulta si es necesario
-        res.json(result.rows);  // Devuelve las palabras no validadas
+        // Obtener todas las palabras
+        const todasPalabras = await pool.query('SELECT * FROM palabras');
+
+        // Obtener las palabras que el usuario ya ha validado
+        const palabrasValidadas = await pool.query(
+            'SELECT palabra_id FROM versiones_palabras WHERE usuario_id = $1',
+            [usuarioId]
+        );
+
+        const idsPalabrasValidadas = palabrasValidadas.rows.map(row => row.palabra_id);
+
+        // Filtrar las palabras no validadas
+        const palabrasNoValidadas = todasPalabras.rows.filter(palabra => 
+            !idsPalabrasValidadas.includes(palabra.id)
+        );
+
+        res.json(palabrasNoValidadas);
     } catch (error) {
-        console.error(error);
-        res.status(500).send('Error al obtener las palabras no validadas');
+        console.error('Error al obtener palabras no validadas:', error);
+        res.status(500).json({ message: 'Error al obtener palabras no validadas' });
     }
 });
+
+
+
 
 
 // Ruta para actualizar una palabra existente
@@ -154,13 +195,21 @@ app.post('/login', async (req, res) => {
             const match = await bcrypt.compare(password, user.password);
             
             if (match) {
-                // Si la contraseña es correcta, envía la respuesta con el rol
+                // Si la contraseña es correcta, genera un token JWT
+                const token = jwt.sign(
+                    { id: user.id, username: user.username, rol: user.rol }, // Payload
+                    'tu_clave_secreta', // Reemplaza esto con tu clave secreta real
+                    { expiresIn: '1h' } // El token expirará en 1 hora
+                );
+
+                // Envía la respuesta con el token y el rol
                 res.json({ 
                     success: true, 
+                    token: token, // Incluye el token en la respuesta
                     user: { 
                         username: user.username, 
                         id: user.id,
-                        rol: user.rol // Asegúrate de que esta línea esté bien
+                        rol: user.rol 
                     } 
                 });
             } else {
@@ -177,41 +226,36 @@ app.post('/login', async (req, res) => {
 
 
 
-// Ruta para validar una palabra
-app.post('/validar-palabra/:id', async (req, res) => {
-    const id = req.params.id;
-    const { esCorrecta, comentario, usuario_id } = req.body;
+// Endpoint para validar una palabra
+app.post('/validar-palabra', async (req, res) => {
+    const { palabra_id, usuario_id, comentario, es_correcta } = req.body;
 
     try {
-        if (!usuario_id) {
-            return res.status(400).send('El usuario_id es necesario');
-        }
-
-        const selectPalabraResult = await pool.query('SELECT * FROM palabras WHERE id = $1', [id]);
-        if (selectPalabraResult.rows.length === 0) {
-            return res.status(404).send('Palabra no encontrada');
-        }
-
-        const { palabra_es, palabra_aimara } = selectPalabraResult.rows[0];
-
-        // Guarda la versión en la tabla versiones_palabras
-        await pool.query(
-            'INSERT INTO versiones_palabras (palabra_id, usuario_id, comentario, es_correcta, palabra_es, palabra_aimara) VALUES ($1, $2, $3, $4, $5, $6)',
-            [id, usuario_id, comentario, esCorrecta, palabra_es, palabra_aimara]
+        // Verificar si el validador ya ha validado la palabra
+        const validacionesPrevias = await pool.query(
+            'SELECT * FROM versiones_palabras WHERE palabra_id = $1 AND usuario_id = $2',
+            [palabra_id, usuario_id]
         );
 
-        // Actualiza el campo validada en la tabla palabras
+        if (validacionesPrevias.rows.length > 0) {
+            return res.status(400).json({ message: 'Ya has validado esta palabra.' });
+        }
+
+        // Insertar nueva validación
         await pool.query(
-            'UPDATE palabras SET validada = $1 WHERE id = $2', 
-            [esCorrecta, id]
+            'INSERT INTO versiones_palabras (palabra_id, usuario_id, comentario, es_correcta) VALUES ($1, $2, $3, $4)',
+            [palabra_id, usuario_id, comentario, es_correcta]
         );
 
-        res.status(201).json({ success: true, mensaje: 'Palabra validada y versión guardada' });
+        res.status(201).json({ message: 'Validación registrada exitosamente.' });
     } catch (error) {
-        console.error(error);
-        res.status(500).send('Error al validar la palabra');
+        console.error('Error al validar la palabra:', error);
+        res.status(500).json({ message: 'Error al validar la palabra.' });
     }
 });
+
+
+
 // Ruta para obtener usuarios con rol "valido"
 app.get('/usuarios/valido', async (req, res) => {
     try {

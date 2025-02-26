@@ -8,20 +8,48 @@ const { Pool } = require('pg');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const session = require('express-session');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 
-// Configuración de la conexión a PostgreSQL
-const pool = new Pool({
-    user: 'elmer', // Cambia esto por tu usuario
-    host: 'localhost', // Cambia esto si tu host es diferente
-    database: 'prueba-validacion', // Cambia esto por tu nombre de base de datos
-    password: 'mermitas', // Cambia esto por tu contraseña
-    port: 5432, // Cambia esto si usas un puerto diferente
-});
+
+
+
+
 
 // Crear una instancia de la aplicación Express
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+
+// Configuración de la conexión a PostgreSQL utilizando variables de entorno
+const pool = new Pool({
+
+    user: process.env.DB_USER,
+    host: process.env.DB_HOST,
+    database: process.env.DB_NAME,
+    password: process.env.DB_PASSWORD,
+    port: process.env.DB_PORT
+
+    // user: 'postgres', // Cambia esto por tu usuario docker (mi_usuario)
+    // host: 'localhost', // Esto debería seguir siendo localhost docker (localhost)
+    // database: 'prueba-validacion', // Cambia esto por tu base de datos docker (mi_base_de_datos)
+    // password: 'Mermitas7$', // Cambia esto por tu contraseña docker (mi_contraseña)
+    // port: 5432, // Este es el puerto mapeado del contenedor, no 5432
+});
+
+// Ruta de prueba para verificar la conexión a la base de datos
+app.get('/test-db', async (req, res) => {
+    try {
+        const client = await pool.connect();
+        const result = await client.query('SELECT NOW()');
+        res.status(200).send(`Conexión exitosa a la base de datos: ${result.rows[0].now}`);
+        client.release();
+    } catch (error) {
+        console.error('Error de conexión a la base de datos:', error);
+        res.status(500).send('Error de conexión a la base de datos');
+    }
+});
 // Configurar middleware
 app.use(cors());
 app.use(bodyParser.json());
@@ -64,6 +92,40 @@ const encryptPassword = async (password) => {
         }
     });
 };
+// Función para marcar una palabra como 'usando'
+const marcarUsando = async (palabraId) => {
+    try {
+      await axios.put(`http://localhost:5000/palabras/marcar-usando`, {
+        palabraId,
+      });
+      console.log('Palabra marcada como en uso');
+    } catch (error) {
+      console.error('Error al marcar la palabra como en uso:', error);
+    }
+  };
+  
+  // Función para desmarcar una palabra como 'usando'
+  const desmarcarUsando = async (palabraId) => {
+    try {
+      await axios.put(`http://localhost:5000/palabras/desmarcar-usando`, {
+        palabraId,
+      });
+      console.log('Palabra desmarcada como en uso');
+    } catch (error) {
+      console.error('Error al desmarcar la palabra:', error);
+    }
+  };
+  
+  // Función para liberar una palabra
+  const liberarPalabra = async () => {
+    try {
+      // Lógica para liberar la palabra, por ejemplo, actualizar su estado en la base de datos
+      console.log('Palabra liberada');
+    } catch (error) {
+      console.error('Error al liberar la palabra:', error);
+    }
+  };
+  
 
 // Función asíncrona para desencriptar la contraseña
 const decryptPassword = async (encryptedPassword) => {
@@ -120,8 +182,71 @@ const verifyToken = (req, res, next) => {
         next();
     });
 };
+// Configuración de almacenamiento en disco
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, 'uploads/');  // Directorio donde se guardan los archivos
+    },
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname);
+        cb(null, Date.now() + ext);  // Renombrar archivo para evitar conflictos
+    }
+});
+
+const upload = multer({ storage: storage });
+
+// Ruta para cargar el archivo de audio
+app.post('/upload-audio', upload.single('audio'), (req, res) => {
+    if (req.file) {
+        console.log(`Archivo subido: ${req.file.filename}`);
+        res.send({ message: 'Archivo subido exitosamente', filePath: `/uploads/${req.file.filename}` });
+    } else {
+        res.status(400).send('No se subió ningún archivo');
+    }
+});
 
 
+// Ruta para generar y descargar el JSON
+app.get('/descargar-json', async (req, res) => {
+    try {
+      const query = `
+        SELECT 
+          p.id AS palabra_id,
+          p.palabra_es,
+          json_agg(DISTINCT v.comentario) AS comentarios_agrupados
+        FROM palabras p
+        LEFT JOIN validaciones_usuarios v ON p.id = v.palabra_id
+        GROUP BY p.id, p.palabra_es;
+      `;
+  
+      const { rows } = await pool.query(query);
+      const jsonFilePath = path.join(__dirname, 'palabras.json');
+  
+      // Escribir el archivo JSON
+      fs.writeFileSync(jsonFilePath, JSON.stringify(rows, null, 2), 'utf8');
+  
+      // Enviar el archivo al cliente
+      res.download(jsonFilePath, 'palabras.json', (err) => {
+        if (err) {
+          console.error('Error al enviar el archivo:', err);
+          res.status(500).send('Error al generar el archivo');
+        }
+      });
+  
+    } catch (error) {
+      console.error('Error al ejecutar la consulta:', error);
+      res.status(500).send('Error al obtener los datos');
+    }
+  });
+  
+app.get('/audio/:filename', (req, res) => {
+    const filePath = path.join(audioPath, req.params.filename);
+    if (fs.existsSync(filePath)) {
+        res.sendFile(filePath);
+    } else {
+        res.status(404).send('Audio no encontrado');
+    }
+});
 
 // Ruta para crear una nueva palabra
 app.post('/palabras', async (req, res) => {
@@ -137,6 +262,8 @@ app.post('/palabras', async (req, res) => {
         res.status(500).send('Error al insertar la palabra');
     }
 });
+
+
 
 
 // Ruta para registrar un nuevo usuario
@@ -205,24 +332,25 @@ app.get('/versiones-palabras', async (req, res) => {
         res.status(500).json({ error: 'Error al obtener versiones de palabras' });
     }
 });
-app.get('/validaciones/count', async (req, res) => {
+app.get('/validaciones/count', authenticateToken, async (req, res) => {
     try {
-      // Verifica si hay un usuario autenticado y el token es válido
-      const userId = req.user.id; // Suponiendo que tienes el ID del usuario en el token
+      const userId = req.user?.id; // Obtener el ID del usuario autenticado desde el token
+  
+      if (!userId) {
+        return res.status(400).json({ error: 'ID de usuario no encontrado' });
+      }
   
       const result = await pool.query(
-        'SELECT COUNT(*) AS count FROM validaciones_usuarios WHERE usuario_id = $1 AND validada = TRUE',
+        'SELECT COUNT(*) AS count FROM validaciones_usuarios WHERE usuario_id = $1',
         [userId]
       );
   
-      // Devolver la respuesta
-      res.json({ count: result.rows[0].count });
+      res.json({ count: parseInt(result.rows[0].count, 10) }); // Asegurar que el resultado sea un número
     } catch (error) {
       console.error('Error al obtener el contador de validaciones:', error);
       res.status(500).json({ error: 'Error al obtener el contador' });
     }
-  });
-
+  });    
 
 // Suponiendo que ya tienes el middleware de autenticación implementado
 // Ruta para obtener las palabras para la validación
@@ -354,11 +482,15 @@ ORDER BY
 
 
 
-
-// Ruta para actualizar una palabra existente
 app.put('/palabras/:id', async (req, res) => {
     const id = req.params.id;
     const { comentario } = req.body; // Solo recibimos comentario
+
+    // Validación para asegurarse de que 'id' es un número entero
+    if (isNaN(id)) {
+        return res.status(400).send('ID debe ser un número entero');
+    }
+
     try {
         const selectResult = await pool.query('SELECT * FROM palabras WHERE id = $1', [id]);
         

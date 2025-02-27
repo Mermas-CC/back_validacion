@@ -11,7 +11,7 @@ const session = require('express-session');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-
+require('dotenv').config(); 
 
 
 
@@ -22,23 +22,32 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 
-// Configuración de la conexión a PostgreSQL utilizando variables de entorno
-const pool = new Pool({
 
-    user: process.env.DB_USER,
-    host: process.env.DB_HOST,
-    database: process.env.DB_NAME,
-    password: process.env.DB_PASSWORD,
-    port: process.env.DB_PORT
+// Verificar si las variables de entorno están cargadas correctamente
+console.log("Intentando conectar a PostgreSQL con:", {
+    user: process.env.DB_USER || "NO DEFINIDO",
+    host: process.env.DB_HOST || "NO DEFINIDO",
+    database: process.env.DB_NAME || "NO DEFINIDO",
+    password: process.env.DB_PASSWORD ? "*****" : "NO DEFINIDO",
+    port: process.env.DB_PORT || "NO DEFINIDO",
+  });
+  
+  if (!process.env.DB_USER || !process.env.DB_HOST || !process.env.DB_NAME || !process.env.DB_PASSWORD || !process.env.DB_PORT) {
+    console.error("❌ ERROR: Algunas variables de entorno no están definidas. Verifica tu archivo .env.");
+    process.exit(1);
+  }
+  
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+  
+  pool.connect()
+    .then(() => console.log('✅ Conectado a Supabase'))
+    .catch(err => console.error('❌ Error al conectar a Supabase:', err));
+  
 
-    // user: 'postgres', // Cambia esto por tu usuario docker (mi_usuario)
-    // host: 'localhost', // Esto debería seguir siendo localhost docker (localhost)
-    // database: 'prueba-validacion', // Cambia esto por tu base de datos docker (mi_base_de_datos)
-    // password: 'Mermitas7$', // Cambia esto por tu contraseña docker (mi_contraseña)
-    // port: 5432, // Este es el puerto mapeado del contenedor, no 5432
-});
-
-// Ruta de prueba para verificar la conexión a la base de datos
+module.exports = pool;
 app.get('/test-db', async (req, res) => {
     try {
         const client = await pool.connect();
@@ -57,22 +66,7 @@ app.use(bodyParser.json());
 
 const secretKey = 'mermitas'; // Cambia esto por una clave más segura
 // Middleware para verificar el token
-const verificarToken = (req, res, next) => {
-    const token = req.headers['authorization']?.split(' ')[1]; // Obtener el token del encabezado Authorization
-  
-    if (!token) {
-      return res.status(403).json({ message: 'Token no proporcionado' });
-    }
-  
-    // Verificar el token
-    jwt.verify(token, 'tu_clave_secreta', (err, decoded) => {
-      if (err) {
-        return res.status(401).json({ message: 'Token no válido' });
-      }
-      req.user = decoded; // Guardar la información decodificada del token en la solicitud
-      next();
-    });
-  };
+
 
 // Función asíncrona para encriptar la contraseña con un IV aleatorio
 const encryptPassword = async (password) => {
@@ -92,40 +86,6 @@ const encryptPassword = async (password) => {
         }
     });
 };
-// Función para marcar una palabra como 'usando'
-const marcarUsando = async (palabraId) => {
-    try {
-      await axios.put(`http://localhost:5000/palabras/marcar-usando`, {
-        palabraId,
-      });
-      console.log('Palabra marcada como en uso');
-    } catch (error) {
-      console.error('Error al marcar la palabra como en uso:', error);
-    }
-  };
-  
-  // Función para desmarcar una palabra como 'usando'
-  const desmarcarUsando = async (palabraId) => {
-    try {
-      await axios.put(`http://localhost:5000/palabras/desmarcar-usando`, {
-        palabraId,
-      });
-      console.log('Palabra desmarcada como en uso');
-    } catch (error) {
-      console.error('Error al desmarcar la palabra:', error);
-    }
-  };
-  
-  // Función para liberar una palabra
-  const liberarPalabra = async () => {
-    try {
-      // Lógica para liberar la palabra, por ejemplo, actualizar su estado en la base de datos
-      console.log('Palabra liberada');
-    } catch (error) {
-      console.error('Error al liberar la palabra:', error);
-    }
-  };
-  
 
 // Función asíncrona para desencriptar la contraseña
 const decryptPassword = async (encryptedPassword) => {

@@ -37,15 +37,14 @@ console.log("Intentando conectar a PostgreSQL con:", {
     process.exit(1);
   }
   
-  const pool = new Pool({
+const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: { rejectUnauthorized: false } // ⚠️ Importante para Supabase
   });
   
   pool.connect()
-    .then(() => console.log('✅ Conectado a Supabase'))
-    .catch(err => console.error('❌ Error al conectar a Supabase:', err));
-  
+    .then(() => console.log("✅ Conectado a Supabase"))
+    .catch(err => console.error("❌ Error al conectar a Supabase:", err));
 
 module.exports = pool;
 app.get('/test-db', async (req, res) => {

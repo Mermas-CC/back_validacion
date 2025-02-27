@@ -24,20 +24,17 @@ const PORT = process.env.PORT || 5000;
 
 
 // Verificar si las variables de entorno están cargadas correctamente
+
 console.log("Intentando conectar a PostgreSQL con:", {
-    user: process.env.DB_USER || "NO DEFINIDO",
-    host: process.env.DB_HOST || "NO DEFINIDO",
-    database: process.env.DB_NAME || "NO DEFINIDO",
-    password: process.env.DB_PASSWORD ? "*****" : "NO DEFINIDO",
-    port: process.env.DB_PORT || "NO DEFINIDO",
+    connectionString: process.env.DATABASE_URL || "NO DEFINIDO",
   });
   
-  if (!process.env.DB_USER || !process.env.DB_HOST || !process.env.DB_NAME || !process.env.DB_PASSWORD || !process.env.DB_PORT) {
-    console.error("❌ ERROR: Algunas variables de entorno no están definidas. Verifica tu archivo .env.");
+  if (!process.env.DATABASE_URL) {
+    console.error("❌ ERROR: La variable DATABASE_URL no está definida.");
     process.exit(1);
   }
   
-const pool = new Pool({
+  const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false } // ⚠️ Importante para Supabase
   });
@@ -45,8 +42,10 @@ const pool = new Pool({
   pool.connect()
     .then(() => console.log("✅ Conectado a Supabase"))
     .catch(err => console.error("❌ Error al conectar a Supabase:", err));
+  
+  module.exports = pool;
 
-module.exports = pool;
+  
 app.get('/test-db', async (req, res) => {
     try {
         const client = await pool.connect();

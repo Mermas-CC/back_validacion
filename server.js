@@ -16,7 +16,6 @@ require('dotenv').config();
 
 
 
-
 // Crear una instancia de la aplicación Express
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -661,26 +660,48 @@ app.post('/validar', async (req, res) => {
   });
   
 
-// Nueva ruta: Obtener todas las palabras con información de validación
-app.get('/palabras-con-validacion', async (req, res) => {
+
+
+// ===== [Dashboard API] =====
+app.get('/api/admin/dashboard', authenticateToken, async (req, res) => {
+    if(req.user.rol !== 'administrador') return res.status(403).json({ error: 'Acceso no autorizado' });
+  
     try {
-        const result = await pool.query(`
-            SELECT p.id, p.palabra_es, p.palabra_aimara, p.comentario, p.validada, 
-                   vp.es_correcta, vp.comentario AS comentario_validacion, u.username AS validador
-            FROM palabras p
-            LEFT JOIN versiones_palabras vp ON p.id = vp.palabra_id
-            LEFT JOIN nuevos_usuarios u ON vp.usuario_id = u.id
-        `);
-        res.json(result.rows); // Devuelve las palabras con detalles de validación
+      const [metrics, activity] = await Promise.all([
+        pool.query(`
+          SELECT 
+            (SELECT COUNT(*) FROM usuarios) as total_usuarios,
+            (SELECT COUNT(*) FROM palabras WHERE validada = false) as palabras_pendientes,
+            (SELECT COUNT(*) FROM validaciones_usuarios) as total_interacciones
+        `),
+        
+        pool.query(`
+          SELECT 
+            u.nombre as validador,
+            p.palabra_es as termino,
+            vu.fecha,
+            vu.es_correcta,
+            vu.comentario,
+            vu.pronunciacion_clip_url
+          FROM validaciones_usuarios vu
+          JOIN usuarios u ON vu.usuario_id = u.id
+          LEFT JOIN palabras p ON vu.palabra_id = p.id
+          ORDER BY vu.fecha DESC 
+          LIMIT 5
+        `)
+      ]);
+  
+      res.json({
+        metricas: metrics.rows[0],
+        actividad_reciente: activity.rows
+      });
+  
     } catch (error) {
-        console.error(error);
-        res.status(500).send('Error al obtener palabras con detalles de validación');
+      console.error('Error en dashboard:', error);
+      res.status(500).json({ error: 'Error interno del servidor' });
     }
 });
-
 // Iniciar el servidor
 app.listen(PORT, () => {
     console.log(`Servidor corriendo en http://localhost:${PORT}`);
 });
-
-

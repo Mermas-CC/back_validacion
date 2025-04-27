@@ -661,12 +661,10 @@ app.post('/validar', async (req, res) => {
   
 
 
-
 // ===== [Dashboard API] =====
 app.get('/api/admin/dashboard', authenticateToken, async (req, res) => {
-    if(req.user.rol !== 'administrador') return res.status(403).json({ error: 'Acceso no autorizado' });
-  
     try {
+      // Realiza las consultas a la base de datos
       const [metrics, activity] = await Promise.all([
         pool.query(`
           SELECT 
@@ -677,30 +675,33 @@ app.get('/api/admin/dashboard', authenticateToken, async (req, res) => {
         
         pool.query(`
           SELECT 
-            u.nombre as validador,
-            p.palabra_es as termino,
-            vu.fecha,
-            vu.es_correcta,
-            vu.comentario,
-            vu.pronunciacion_clip_url
-          FROM validaciones_usuarios vu
-          JOIN usuarios u ON vu.usuario_id = u.id
-          LEFT JOIN palabras p ON vu.palabra_id = p.id
-          ORDER BY vu.fecha DESC 
-          LIMIT 5
+  u.nombre as validador,
+  p.palabra_es as termino,
+  TO_CHAR(vu.fecha, 'DD/MM/YYYY HH24:MI') as fecha_formateada,
+  vu.comentario,
+  vu.pronunciacion_clip_url
+FROM validaciones_usuarios vu
+JOIN usuarios u ON vu.usuario_id = u.id
+LEFT JOIN palabras p ON vu.palabra_id = p.id
+ORDER BY vu.fecha DESC 
+LIMIT 5
+
         `)
       ]);
   
+      // Responde con los datos de métricas y actividad
       res.json({
         metricas: metrics.rows[0],
         actividad_reciente: activity.rows
       });
   
     } catch (error) {
+      // En caso de error, responde con un mensaje adecuado
       console.error('Error en dashboard:', error);
       res.status(500).json({ error: 'Error interno del servidor' });
     }
 });
+
 // Iniciar el servidor
 app.listen(PORT, () => {
     console.log(`Servidor corriendo en http://localhost:${PORT}`);

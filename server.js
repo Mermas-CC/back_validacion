@@ -155,8 +155,8 @@ const upload = multer({ storage: storage });
 // Ruta para cargar el archivo de audio
 app.post('/upload-audio', upload.single('audio'), (req, res) => {
     if (req.file) {
-        console.log(`Archivo subido: ${req.file.filename}`);
-        res.send({ message: 'Archivo subido exitosamente', filePath: `/uploads/${req.file.filename}` });
+        const audioUrl = `/uploads/${req.file.filename}`;
+        res.send({ message: 'Archivo subido exitosamente', filePath: audioUrl, audioUrl });
     } else {
         res.status(400).send('No se subió ningún archivo');
     }
@@ -196,14 +196,11 @@ app.get('/descargar-json', async (req, res) => {
     }
   });
   
-app.get('/audio/:filename', (req, res) => {
-    const filePath = path.join(audioPath, req.params.filename);
-    if (fs.existsSync(filePath)) {
-        res.sendFile(filePath);
-    } else {
-        res.status(404).send('Audio no encontrado');
-    }
-});
+// Servir archivos estáticos de la carpeta uploads
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Elimina o comenta la ruta innecesaria de audio si existe
+// app.get('/audio/:filename', ...);
 
 // Ruta para crear una nueva palabra
 app.post('/palabras', async (req, res) => {
@@ -353,7 +350,7 @@ app.get('/palabras/no-validadas', authenticateToken, async (req, res) => {
 
 // Ruta para validar una palabra
 app.post('/validar-palabra', async (req, res) => {
-    const { palabra_id, usuario_id, comentario, es_correcta } = req.body;
+    const { palabra_id, usuario_id, comentario, es_correcta, pronunciacion_clip_url } = req.body;
   
     try {
       // Comprobamos si el usuario ya validó esta palabra
@@ -380,8 +377,9 @@ app.post('/validar-palabra', async (req, res) => {
   
       // Insertar una nueva validación en la tabla 'validaciones_usuarios'
       await pool.query(
-        'INSERT INTO validaciones_usuarios (palabra_id, usuario_id, comentario, es_correcta) VALUES ($1, $2, $3, $4)',
-        [palabra_id, usuario_id, comentario, es_correcta]
+        `INSERT INTO validaciones_usuarios (palabra_id, usuario_id, comentario, es_correcta, pronunciacion_clip_url) 
+         VALUES ($1, $2, $3, $4, $5)`,
+        [palabra_id, usuario_id, comentario, es_correcta, pronunciacion_clip_url || null]
       );
   
       // Actualizar el estado de la validación en la tabla de palabras
@@ -699,6 +697,31 @@ LIMIT 5
       // En caso de error, responde con un mensaje adecuado
       console.error('Error en dashboard:', error);
       res.status(500).json({ error: 'Error interno del servidor' });
+    }
+});
+
+// Ruta para obtener las últimas 5 validaciones del usuario autenticado
+app.get('/api/validador/dashboard', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id; // Obtener el ID del usuario autenticado desde el token
+
+        const result = await pool.query(`
+            SELECT 
+                p.palabra_es AS termino,
+                TO_CHAR(vu.fecha, 'DD/MM/YYYY HH24:MI') AS fecha_formateada,
+                vu.comentario,
+                vu.pronunciacion_clip_url
+            FROM validaciones_usuarios vu
+            LEFT JOIN palabras p ON vu.palabra_id = p.id
+            WHERE vu.usuario_id = $1
+            ORDER BY vu.fecha DESC
+            LIMIT 5
+        `, [userId]);
+
+        res.json({ actividad_reciente: result.rows });
+    } catch (error) {
+        console.error('Error al obtener el dashboard del validador:', error);
+        res.status(500).json({ error: 'Error interno del servidor' });
     }
 });
 

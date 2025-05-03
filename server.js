@@ -323,7 +323,8 @@ app.get('/palabras/no-validadas', authenticateToken, async (req, res) => {
                 FROM validaciones_usuarios 
                 WHERE usuario_id = $1
               )
-            ORDER BY id ASC  -- Ordena por id para asegurar el orden original
+            ORDER BY id ASC
+            LIMIT 1
             `,
             [usuarioId]
         );
@@ -338,6 +339,7 @@ app.get('/palabras/no-validadas', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Error al obtener las palabras.' });
     }
 });
+
 
 
 
@@ -418,6 +420,7 @@ ON
     p.id = v.palabra_id
 ORDER BY 
     p.id, v.fecha DESC;
+    
 
         `;
         const result = await pool.query(query);

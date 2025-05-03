@@ -728,6 +728,82 @@ app.get('/api/validador/dashboard', authenticateToken, async (req, res) => {
     }
 });
 
+// ===== [Estadísticas para validador] =====
+app.get('/api/validador/stats', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        // Total de validaciones del usuario
+        const totalRes = await pool.query(
+            `SELECT COUNT(*) AS total FROM validaciones_usuarios WHERE usuario_id = $1`,
+            [userId]
+        );
+        const totalUsuario = parseInt(totalRes.rows[0].total, 10);
+
+        // Total de validaciones de todos los usuarios y cantidad de usuarios
+        const totalAllRes = await pool.query(
+            `SELECT usuario_id, COUNT(*) AS total FROM validaciones_usuarios GROUP BY usuario_id`
+        );
+        const totalAll = totalAllRes.rows.reduce((sum, r) => sum + parseInt(r.total, 10), 0);
+        const usuariosCount = totalAllRes.rows.length;
+        const promedioTotal = usuariosCount > 0 ? Math.round(totalAll / usuariosCount) : 0;
+        const maxUsuario = totalAllRes.rows.reduce((max, r) => Math.max(max, parseInt(r.total, 10)), 0);
+
+        // Validaciones por día del usuario (últimos 7 días)
+        const actividadRes = await pool.query(
+            `SELECT 
+                TO_CHAR(fecha, 'YYYY-MM-DD') AS dia,
+                COUNT(*) AS cantidad
+            FROM validaciones_usuarios
+            WHERE usuario_id = $1 AND fecha >= NOW() - INTERVAL '7 days'
+            GROUP BY dia
+            ORDER BY dia ASC`,
+            [userId]
+        );
+
+        // Promedio de validaciones por día de todos los usuarios (últimos 7 días)
+        const actividadAllRes = await pool.query(
+            `SELECT 
+                TO_CHAR(fecha, 'YYYY-MM-DD') AS dia,
+                COUNT(*) AS cantidad
+            FROM validaciones_usuarios
+            WHERE fecha >= NOW() - INTERVAL '7 days'
+            GROUP BY dia
+            ORDER BY dia ASC`
+        );
+        // Calcula promedio por día
+        const actividadAllMap = {};
+        actividadAllRes.rows.forEach(r => {
+            actividadAllMap[r.dia] = parseInt(r.cantidad, 10);
+        });
+        const actividadUsuarioMap = {};
+        actividadRes.rows.forEach(r => {
+            actividadUsuarioMap[r.dia] = parseInt(r.cantidad, 10);
+        });
+        // Unifica días
+        const dias = Array.from(new Set([
+            ...actividadRes.rows.map(r => r.dia),
+            ...actividadAllRes.rows.map(r => r.dia)
+        ])).sort();
+
+        const actividadPorDia = dias.map(dia => ({
+            dia,
+            usuario: actividadUsuarioMap[dia] || 0,
+            promedio: usuariosCount > 0 ? Math.round((actividadAllMap[dia] || 0) / usuariosCount) : 0
+        }));
+
+        res.json({
+            total_usuario: totalUsuario,
+            promedio_total: promedioTotal,
+            max_usuario: maxUsuario,
+            actividad_por_dia: actividadPorDia // [{ dia, usuario, promedio }]
+        });
+    } catch (error) {
+        console.error('Error en stats validador:', error);
+        res.status(500).json({ error: 'Error interno del servidor' });
+    }
+});
+
 // Iniciar el servidor
 app.listen(PORT, () => {
     console.log(`Servidor corriendo en http://localhost:${PORT}`);

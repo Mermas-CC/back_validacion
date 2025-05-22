@@ -11,6 +11,7 @@ const session = require('express-session');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { ClerkExpressRequireAuth, verifyToken: verifyClerkToken } = require('@clerk/clerk-sdk-node')
 require('dotenv').config(); 
 
 
@@ -536,11 +537,60 @@ app.post('/login', async (req, res) => {
     }
 });
 
+// Ruta para sincronizar usuario Clerk con la base de datos
+app.post('/auth/clerk-sync', async (req, res) => {
+    try {
+        // El JWT de Clerk viene en el header Authorization: Bearer <token>
+        const authHeader = req.headers['authorization'];
+        if (!authHeader) return res.status(401).json({ error: 'No autorizado' });
+        const token = authHeader.replace('Bearer ', '');
 
+        // Verifica el token con Clerk
+        const clerkUser = await verifyClerkToken(token);
+        if (!clerkUser) return res.status(401).json({ error: 'Token Clerk inválido' });
 
+        // clerkUser contiene info como id, email, etc.
+        const email = clerkUser.email_addresses?.[0]?.email_address || '';
+        const nombre = clerkUser.first_name || clerkUser.username || email;
+        const externalId = clerkUser.id;
 
+        // Busca el usuario en tu base de datos por email o externalId
+        let userResult = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
+        let user = userResult.rows[0];
 
+        // Si no existe, créalo (puedes asignar rol por defecto)
+        if (!user) {
+            const rol = 'valido'; // O lógica para asignar rol
+            const insertResult = await pool.query(
+                'INSERT INTO usuarios (nombre, email, rol, external_id) VALUES ($1, $2, $3, $4) RETURNING *',
+                [nombre, email, rol, externalId]
+            );
+            user = insertResult.rows[0];
+        }
 
+        // Genera tu propio token si lo necesitas (opcional)
+        const jwt = require('jsonwebtoken');
+        const secretKey = 'mermitas';
+        const appToken = jwt.sign(
+            { id: user.id, nombre: user.nombre, rol: user.rol },
+            secretKey,
+            { expiresIn: '1h' }
+        );
+
+        res.json({
+            user: {
+                id: user.id,
+                nombre: user.nombre,
+                email: user.email,
+                rol: user.rol
+            },
+            token: appToken
+        });
+    } catch (err) {
+        console.error('Error en /auth/clerk-sync:', err);
+        res.status(500).json({ error: 'Error interno' });
+    }
+});
 
 // Ruta para obtener usuarios con rol "valido"
 app.get('/usuarios/valido', async (req, res) => {
@@ -615,7 +665,6 @@ app.delete('/usuarios/:id', async (req, res) => {
         res.status(500).send('Error al eliminar el usuario');
     }
 });
-
 
 // Ruta para obtener todas las versiones de palabras
 app.get('/versiones_palabras', async (req, res) => {

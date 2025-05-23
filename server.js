@@ -6,7 +6,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const { Pool } = require('pg');
 const crypto = require('crypto');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const session = require('express-session');
 const multer = require('multer');
 const path = require('path');
@@ -223,24 +223,21 @@ app.post('/palabras', async (req, res) => {
 
 // Ruta para registrar un nuevo usuario
 app.post('/register', async (req, res) => {
-    const { username, password, rol } = req.body;
+    const { nombre, contraseña, email, rol } = req.body;
 
-    // Verificar si el usuario ya existe
-    const existingUser = await pool.query('SELECT * FROM nuevos_usuarios WHERE username = $1', [username]);
+    // Verificar si el email ya existe
+    const existingUser = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
     if (existingUser.rows.length > 0) {
-        return res.status(400).json({ message: 'Usuario ya existe' });
+        return res.status(400).json({ message: 'El correo ya está registrado' });
     }
 
     // Hashear la contraseña
-
-    //borrar-luego-const passwordHash = await encryptPassword(password);
-
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(contraseña, 10);
 
     try {
         const newUser = await pool.query(
-            'INSERT INTO usuarios (username, password, rol) VALUES ($1, $2, $3) RETURNING *',
-            [username, passwordHash, rol]
+            'INSERT INTO usuarios (nombre, contraseña, email, rol) VALUES ($1, $2, $3, $4) RETURNING *',
+            [nombre, passwordHash, email, rol]
         );
         res.status(201).json(newUser.rows[0]); // Devuelve el nuevo usuario creado
     } catch (error) {
@@ -310,8 +307,8 @@ app.get('/validaciones/count', authenticateToken, async (req, res) => {
 // Suponiendo que ya tienes el middleware de autenticación implementado
 // Ruta para obtener las palabras para la validación
 // Ruta para obtener las palabras disponibles para validación
-app.get('/palabras/no-validadas', authenticateToken, async (req, res) => {
-    try {
+    app.get('/palabras/no-validadas', authenticateToken, async (req, res) => {
+        try {
         const usuarioId = req.user.id; // Obtenido del token JWT
         const resultado = await pool.query(
             `
@@ -480,28 +477,28 @@ app.delete('/palabras/:id', async (req, res) => {
         res.status(500).send('Error al eliminar la palabra');
     }
 });
+// Ruta para iniciar sesión por correo electrónico
 app.post('/login', async (req, res) => {
-    const { username, password } = req.body;
+    const { email, contraseña } = req.body;
 
     try {
-        // Consulta a la base de datos
+        // Buscar usuario por email
         const result = await pool.query(
-            'SELECT id, nombre AS username, contraseña AS password, rol FROM Usuarios WHERE nombre = $1',
-            [username]
+            'SELECT id, nombre, contraseña, rol, email FROM usuarios WHERE email = $1',
+            [email]
         );
 
-        const user = result.rows[0]; // Asumimos que `username` es único en la tabla Usuarios
+        const user = result.rows[0];
 
-        // Verifica si se encontró el usuario
         if (!user) {
             return res.status(404).json({ 
                 success: false, 
-                message: 'Usuario no encontrado' 
+                message: 'Correo no registrado' 
             });
         }
 
-        // Compara la contraseña ingresada con la almacenada en la base de datos
-        const match = await bcrypt.compare(password, user.password);
+        // Comparar la contraseña ingresada con la almacenada
+        const match = await bcrypt.compare(contraseña, user.contraseña);
 
         if (!match) {
             return res.status(401).json({ 
@@ -510,21 +507,21 @@ app.post('/login', async (req, res) => {
             });
         }
 
-        // Si la contraseña es correcta, genera un token JWT
+        // Generar token JWT
         const token = jwt.sign(
-            { id: user.id, username: user.username, rol: user.rol }, // Payload
-            secretKey, // Clave secreta
-            { expiresIn: '1h' } // Configuración de expiración del token
+            { id: user.id, nombre: user.nombre, rol: user.rol, email: user.email },
+            secretKey,
+            { expiresIn: '1h' }
         );
 
-        // Envía la respuesta con el token y los detalles del usuario
         res.status(200).json({ 
             success: true, 
-            token, // Token JWT
+            token,
             user: { 
                 id: user.id,
-                username: user.username,
-                rol: user.rol 
+                nombre: user.nombre,
+                rol: user.rol,
+                email: user.email
             }
         });
 
@@ -603,14 +600,14 @@ app.get('/usuarios/valido', async (req, res) => {
     }
 });
 
-// Ruta para crear un nuevo usuario
+// Ruta para crear un nuevo usuario (admin)
 app.post('/usuarios', async (req, res) => {
     const { nombre, contraseña, email, rol } = req.body;
 
-    // Verificar si el usuario ya existe
-    const existingUser = await pool.query('SELECT * FROM usuarios WHERE nombre = $1', [nombre]);
+    // Verificar si el email ya existe
+    const existingUser = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
     if (existingUser.rows.length > 0) {
-        return res.status(400).json({ message: 'Usuario ya existe' });
+        return res.status(400).json({ message: 'El correo ya está registrado' });
     }
 
     // Hashear la contraseña
@@ -621,10 +618,21 @@ app.post('/usuarios', async (req, res) => {
             'INSERT INTO usuarios (nombre, contraseña, email, rol) VALUES ($1, $2, $3, $4) RETURNING *',
             [nombre, passwordHash, email, rol]
         );
-        res.status(201).json(newUser.rows[0]); // Devuelve el nuevo usuario creado
+        res.status(201).json(newUser.rows[0]);
     } catch (error) {
         console.error(error);
         res.status(500).send('Error al registrar el usuario');
+    }
+});
+
+// Ruta para obtener todos los usuarios (admin y validadores)
+app.get('/usuarios', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM usuarios');
+        res.json(result.rows);  // Devuelve todos los usuarios
+    } catch (error) {
+        console.error('Error al obtener usuarios:', error);
+        res.status(500).send('Error al obtener usuarios');
     }
 });
 
@@ -657,14 +665,27 @@ app.put('/usuarios/:id', async (req, res) => {
 // Ruta para eliminar un usuario
 app.delete('/usuarios/:id', async (req, res) => {
     const id = req.params.id;
+
     try {
+        await pool.query('BEGIN'); // Inicia transacción
+
+        // Elimina registros dependientes
+        await pool.query('DELETE FROM validaciones_usuarios WHERE usuario_id = $1', [id]);
+        await pool.query('DELETE FROM historial WHERE id_usuario = $1', [id]);
+
+        // Ahora elimina al usuario
         const result = await pool.query('DELETE FROM usuarios WHERE id = $1 RETURNING *', [id]);
+
+        await pool.query('COMMIT'); // Confirma la transacción
+
         res.json(result.rows.length > 0 ? result.rows[0] : { message: 'Usuario no encontrado' });
     } catch (error) {
+        await pool.query('ROLLBACK'); // Reversión si algo falla
         console.error(error);
         res.status(500).send('Error al eliminar el usuario');
     }
 });
+
 
 // Ruta para obtener todas las versiones de palabras
 app.get('/versiones_palabras', async (req, res) => {
